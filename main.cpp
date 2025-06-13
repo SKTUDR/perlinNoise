@@ -1,134 +1,147 @@
-﻿#include "DxLib.h" // DxLib のヘッダファイルをインクルード
-#include <cmath>   // 数学関数（cos, sin, floor など）に必要
-#include <vector>  // std::vector（動的配列）を使うため
-#include <random>  // 乱数生成用
+﻿// DxLib のヘッダファイル（描画や画面制御に使用）
+#include "DxLib.h"
 
-// 描画サイズ（ピクセル）
-const int WIDTH = 1280;
-const int HEIGHT = 720;
+#include <cmath>    // 数学関数（sin, cos など）用
+#include <vector>   // ベクタ型を使用するため
+#include <random>   // 乱数生成用
 
-// パーリンノイズのグリッドサイズ（細かさ）
-const int GRID_SIZE = 64;  // 小さいほど細かいノイズになる
+// 画面サイズ（描画するピクセル領域）
+const int WIDTH = 1280;   // 横幅（ピクセル）
+const int HEIGHT = 720;  // 高さ（ピクセル）
 
-// スムーズステップ関数（Perlin の補間用）
+// グリッドの間隔（パーリンノイズの基本単位サイズ）
+const int GRID_SIZE = 32;
+
+// 補間関数：スムーズステップ（S字カーブ）
+// t: [0.0〜1.0] の補間パラメータ
+// 戻り値: tを滑らかにした値
 float fade(float t) {
-    // 6t^5 - 15t^4 + 10t^3：滑らかに0→1に補間されるS字カーブ
     return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
-// 線形補間関数（基本の補間）
+// 線形補間関数
+// a, b: 補間元の2値
+// t: 補間係数（0〜1）
+// 戻り値: aとbをtで補間した値
 float lerp(float a, float b, float t) {
-    // aからbまで、割合tで補間（0<=t<=1）
     return a + t * (b - a);
 }
 
-// 内積計算（2D）
-// 勾配ベクトルと距離ベクトルの内積を計算する
+// ドット積計算：グリッドの勾配ベクトルと対象点からの距離ベクトルの内積を求める
+// ix, iy: 勾配ベクトルのグリッド座標
+// x, y: 対象点の座標（連続空間）
+// gradients: 勾配ベクトルの2次元配列
+// 戻り値: 点(x,y)とグリッド(ix,iy)のベクトルの内積
 float dotGridGradient(int ix, int iy, float x, float y,
     const std::vector<std::vector<std::pair<float, float>>>& gradients) {
 
-    // 距離ベクトル：グリッド点(ix, iy) から対象点(x, y) への差
+    // 点とグリッドの差分（距離ベクトル）
     float dx = x - ix;
     float dy = y - iy;
 
-    // グリッド点の勾配ベクトルを取得（すでにランダムで割り当て済み）
+    // 勾配ベクトルの取得（ランダムに与えられている）
     auto grad = gradients[iy][ix];
 
-    // 内積を返す：滑らかな変化のための基本値になる
+    // 距離ベクトルと勾配ベクトルの内積
     return dx * grad.first + dy * grad.second;
 }
 
-// パーリンノイズ計算関数
-// グリッド空間座標 (x, y) に対してノイズ値を返す
+// パーリンノイズ計算関数（1オクターブ）
+// x, y: ノイズ空間上の座標（float）
+// gradients: 勾配ベクトルの2次元配列
+// 戻り値: パーリンノイズ値（範囲は概ね -1.0〜1.0）
 float perlin(float x, float y,
     const std::vector<std::vector<std::pair<float, float>>>& gradients) {
 
-    // グリッドの左上整数座標
+    // 対象座標の左上整数グリッド
     int x0 = (int)x;
     int y0 = (int)y;
 
-    // グリッドの右下座標（次のグリッド点）
+    // 右隣・下隣のグリッド
     int x1 = x0 + 1;
     int y1 = y0 + 1;
 
-    // 小数部分を使って補間率を決定
-    float sx = fade(x - x0); // X方向補間率
-    float sy = fade(y - y0); // Y方向補間率
+    // 小数部分を補間パラメータにする（S字補間に備える）
+    float sx = fade(x - x0);
+    float sy = fade(y - y0);
 
-    // 4隅のグリッド点との内積を計算（影響度）
+    // 4つのグリッド点に対する内積計算
     float n0 = dotGridGradient(x0, y0, x, y, gradients);
     float n1 = dotGridGradient(x1, y0, x, y, gradients);
-    float ix0 = lerp(n0, n1, sx); // 左上と右上をX方向に補間
+    float ix0 = lerp(n0, n1, sx); // 上辺補間
 
     float n2 = dotGridGradient(x0, y1, x, y, gradients);
     float n3 = dotGridGradient(x1, y1, x, y, gradients);
-    float ix1 = lerp(n2, n3, sx); // 左下と右下をX方向に補間
+    float ix1 = lerp(n2, n3, sx); // 下辺補間
 
-    // 上下をY方向に補間して最終ノイズ値を得る
+    // 上下を補間して最終ノイズ値にする
     return lerp(ix0, ix1, sy);
 }
 
-// ランダムな単位ベクトルを生成（2D）
-// 勾配ベクトルとして使用
+// 勾配ベクトルをランダムに生成
+// gen: 乱数エンジン
+// 戻り値: 単位長の2Dベクトル（cosθ, sinθ）
 std::pair<float, float> randomGradient(std::mt19937& gen) {
     std::uniform_real_distribution<float> dist(0.0f, 2.0f * 3.1415926f);
-    float angle = dist(gen);  // 0〜360度（ラジアン）
-    return { std::cos(angle), std::sin(angle) }; // 単位ベクトル（方向のみ）
+    float angle = dist(gen); // 0〜2πのランダム角度
+    return { std::cos(angle), std::sin(angle) }; // 単位ベクトル
 }
 
-// メイン関数（Win32 API形式）
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
-    // DxLibの初期化（失敗したら終了）
+
+int WINAPI WinMain(
+    _In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPSTR lpCmdLine,
+    _In_ int nShowCmd) 
+{
+    // DxLib 初期化（失敗時は終了）
     if (DxLib_Init() == -1) return -1;
 
-    // 裏画面に描画（ダブルバッファリング）
+    // 描画先を裏画面に設定（ダブルバッファリング）
     SetDrawScreen(DX_SCREEN_BACK);
-    SetGraphMode(WIDTH, HEIGHT, 32);
-    ChangeWindowMode(TRUE);
 
-    // 勾配ベクトルグリッドのサイズを決定
-    int gridW = WIDTH / GRID_SIZE + 2; // ピクセルに合わせて+2余裕持たせる
+    // 勾配ベクトルを格納する2次元ベクトル
+    // グリッド点は (WIDTH / GRID_SIZE + 2) × (HEIGHT / GRID_SIZE + 2)
+    int gridW = WIDTH / GRID_SIZE + 2;
     int gridH = HEIGHT / GRID_SIZE + 2;
 
-    // 勾配ベクトルを格納する2次元ベクトル配列
+    // 乱数生成器（種は固定して毎回同じパターンに）
+    std::mt19937 rng(123);
+
+    // 勾配ベクトルを各グリッド点に割り当てる
     std::vector<std::vector<std::pair<float, float>>> gradients(
         gridH, std::vector<std::pair<float, float>>(gridW));
-
-    // 乱数生成器（固定シードで再現可能に）
-    std::mt19937 rng(42);
-
-    // グリッド全体にランダムな勾配ベクトルを割り当て
     for (int y = 0; y < gridH; y++) {
         for (int x = 0; x < gridW; x++) {
             gradients[y][x] = randomGradient(rng);
         }
     }
 
-    // 描画処理：各ピクセルごとにパーリンノイズ値を計算
+    // 全画素に対してノイズを計算し、画面に描画
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
-            // グリッド空間に変換（ピクセル座標を小数化）
+            // 現在のピクセルをノイズ空間に正規化（グリッドサイズで割る）
             float fx = (float)x / GRID_SIZE;
             float fy = (float)y / GRID_SIZE;
 
-            // ノイズ値を取得（-1〜1）
+            // パーリンノイズ値（-1.0〜1.0 程度）
             float n = perlin(fx, fy, gradients);
 
-            // ノイズ値を0〜255のグレースケールに変換
-            n = (n + 1.0f) / 2.0f;  // -1〜1 → 0〜1
-            int gray = (int)(n * 255);
+            // 値を 0〜255 にマッピング（グレースケール）
+            n = (n + 1.0f) / 2.0f;     // -1〜1 → 0〜1
+            int gray = (int)(n * 255); // 0〜255
 
-            // ピクセルを描画（グレースケール）
+            // ピクセルを描画（RGB同値でグレースケール）
             DrawPixel(x, y, GetColor(gray, gray, gray));
         }
     }
 
-    // メインループ（ESCキーが押されるまで）
+    // 終了までメッセージループ（ESCキーで終了）
     while (!ProcessMessage() && !CheckHitKey(KEY_INPUT_ESCAPE)) {
-        ScreenFlip(); // 裏画面を表画面に反映
+        ScreenFlip(); // 裏画面を表画面に反映（表示）
     }
 
-    // DxLibの終了処理（リソース解放）
+    // DxLib 終了処理
     DxLib_End();
     return 0;
 }
