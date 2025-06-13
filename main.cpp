@@ -4,33 +4,49 @@
 #include <random>
 
 // === 設定定数 ===
-const int WIDTH = 1280;        // 描画領域の横幅（ピクセル）
-const int HEIGHT = 720;       // 描画領域の縦幅（ピクセル）
-const int GRID_SIZE = 40;     // パーリンノイズのグリッドサイズ
-const int OCTAVES = 5;        // フラクタルノイズのオクターブ数（重ねる層の数）
-const float PERSISTENCE = 0.5f; // 各オクターブの振幅の減衰率（次第に小さくなる）
+static constexpr int WIDTH = 1280;        // 描画領域の横幅（ピクセル）
+static constexpr int HEIGHT = 720;       // 描画領域の縦幅（ピクセル）
+static constexpr int GRID_SIZE = 40;     // パーリンノイズのグリッドサイズ  値が大きいほど粗いノイズ　（現在は上記二つの定数の公約数でないと機能しない）
 
-// 補間用のスムージング関数（fade 関数、Perlin の定義に基づく）
+
+static constexpr int OCTAVES = 5;        // フラクタルノイズのオクターブ数（重ねる層の数）
+static constexpr float PERSISTENCE = 0.5f; // 各オクターブの振幅の減衰率（次第に小さくなる）
+
+
+// 補間用のスムージング関数（fade 関数、Perlin の定義に基づく）`
 float fade(float t) {
     // 6t^5 - 15t^4 + 10t^3
+    // イーズ曲線
+	// t の値を 0.0 ～ 1.0 の範囲で滑らかに変化させる関数
+	// 3次のスムージング関数で、t の値を滑らかに変化させる  
+	// これにより、ノイズの変化が滑らかになり、ギザギザ感が減少する
     return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
 // 線形補間
+// a と b の間を t で補間する関数（t は 0.0 ～ 1.0 の範囲）
+// tが0.0 のとき a、1.0 のとき b を返す
+// t が 0.5 のときは a と b の中間値を返す
+// これにより、ノイズの値を滑らかに変化させることができる
+// 例えば、a = 0.0, b = 1.0, t = 0.5 のとき、0.5 を返す
 float lerp(float a, float b, float t) {
     return a + t * (b - a);
 }
 
 // グリッド点と入力座標との距離ベクトルと、グリッドの勾配ベクトルの内積を計算
+// 影響力の値を決定
+// ix, iy はグリッドの整数座標、x, y は入力座標
 float dotGridGradient(
     int ix, int iy, float x, float y,
     const std::vector<std::vector<std::pair<float, float>>>& gradients
 ) {
+	// グリッドセルの左上の座標 (ix, iy) と入力座標 (x, y) の距離ベクトル
     float dx = x - ix;
     float dy = y - iy;
 
     const auto& grad = gradients[iy][ix];  // (ix, iy) のランダムな勾配ベクトル
 
+	// 勾配ベクトルと距離ベクトルの内積を計算し、返す。
     return dx * grad.first + dy * grad.second;
 }
 
@@ -72,11 +88,25 @@ float fractalPerlin(float x, float y,
     float maxValue = 0.0f;   // 振幅の合計（正規化用）
 
     for (int i = 0; i < OCTAVES; ++i) {
-        // パーリンノイズを加算
+      
+		// 周波数を上げ、振幅を下げていく
+		// これにより、粗いノイズから細かいノイズへと変化する
+		// 各オクターブで異なるスケールのノイズを生成
+		// 例えば、最初のオクターブでは粗いノイズ、次のオクターブでは細かいノイズを生成する
+		// これにより、フラクタルなノイズが生成される
+
+          // パーリンノイズを加算
+		// perlin 関数を呼び出して、現在の周波数と振幅でノイズを計算
+		// ここでは、x と y の座標を周波数でスケーリングして、異なるスケールのノイズを生成
+		// これにより、異なるスケールのノイズが合成され、フラクタルなパターンが生成される
         total += perlin(x * frequency, y * frequency, gradients) * amplitude;
 
         // 次のオクターブでは細かく・弱くする
+		// 振幅の合計を更新
         maxValue += amplitude;
+
+		// 振幅を減衰させ、周波数を倍にする
+		// 振幅は PERSISTENCE で減衰し、周波数は倍増する
         amplitude *= PERSISTENCE;
         frequency *= 2.0f;
     }
@@ -84,8 +114,11 @@ float fractalPerlin(float x, float y,
     return total / maxValue; // -1〜1 に正規化
 }
 
+
 // ランダムな単位ベクトル（勾配）を生成
 std::pair<float, float> randomGradient(std::mt19937& gen) {
+
+	// 0〜2πの範囲でランダムな角度を生成し、単位ベクトルに変換
     std::uniform_real_distribution<float> dist(0.0f, 2.0f * 3.1415926f);
     float angle = dist(gen);
     return { std::cos(angle), std::sin(angle) };
@@ -102,7 +135,12 @@ unsigned int getForestColor(float n) {
 }
 
 // メイン関数（DxLibのエントリーポイント）
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+int WINAPI WinMain(
+    _In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPSTR lpCmdLine,
+    _In_ int nShowCmd) 
+{
     // DxLib 初期化
     if (DxLib_Init() == -1) return -1;
     SetDrawScreen(DX_SCREEN_BACK); // 描画先を裏画面に設定（ダブルバッファリング）
@@ -116,9 +154,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // 乱数生成器（固定シードで毎回同じ）
     std::mt19937 rng(1234);
 
-    // ランダム勾配ベクトルを生成（パーリンノイズ用）
-    std::vector<std::vector<std::pair<float, float>>> gradients(
-        gridH, std::vector<std::pair<float, float>>(gridW));
+	// 各グリッドセルに対してランダムな勾配ベクトルを生成
+	// 2次元ベクトルの配列を使用して、各グリッドセルの勾配を格納
+	// ここでは、グリッドの幅と高さを計算して、各セルにランダムな勾配を割り当てる
+    std::vector<std::vector<std::pair<float, float>>>  gradients(gridH, std::vector<std::pair<float, float>>(gridW));
+
+	// 各グリッドセルにランダムな勾配を設定
+	// 乱数生成器を使用して、各セルにランダムな単位ベクトルを割り当てる
+	// これにより、各セルのノイズ計算に使用される勾配が決定される
     for (int y = 0; y < gridH; y++) {
         for (int x = 0; x < gridW; x++) {
             gradients[y][x] = randomGradient(rng);
